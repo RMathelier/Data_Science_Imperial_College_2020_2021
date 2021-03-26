@@ -10,6 +10,7 @@ library(tidyverse)
 library(randomForest)
 library(xtable)
 library(gridExtra)
+library(reshape2)
 
 my_theme =
   theme(plot.title = element_text(hjust = 0.5, size = 16),
@@ -40,7 +41,7 @@ features_bias = c("age",
                   "bty_f1lower", "bty_f1upper", "bty_f2upper", "bty_m1lower", "bty_m1upper", "bty_m2upper", "bty_avg",
                   "pic_outfit", "pic_color")
 
-features_bias_other = c("age",
+features_bias_other_bty = c("age",
                         "gender",
                         "ethnicity",
                         "language",
@@ -73,7 +74,7 @@ y_train_bty = data_train_bty[,1]
 x_test_bty = data_test_bty[,2:dim(data_bty)[2]]
 y_test_bty = data_test_bty[,1]
 
-summary(data_test_comp)
+summary(data_train)
 
 ##### Data vizualisation #####
 
@@ -97,6 +98,78 @@ ggplot(data, aes(x = score, fill = rank)) +
        y = "Density")  +
   my_theme
 dev.off()
+
+# histogram percentage
+
+pdf("hist_perc.pdf")
+ggplot(data_train) +
+  geom_histogram(aes(x = cls_perc_eval), fill = 'navyblue', alpha = 0.7, bins=20) + 
+  scale_x_continuous(name = "Percentage of students that completed SET") +
+  scale_y_continuous(name = "Number of observations") +
+  my_theme
+dev.off()
+
+# credit
+
+pdf("credit.pdf")
+ggplot(data, aes(x = score, fill = cls_credits)) +
+  geom_density(adjust = 1, alpha = 0.5) +
+  facet_grid(cls_credits ~ .) +
+  labs(fill = "credit",
+       y = "Density")  +
+  my_theme
+dev.off()
+
+# beauty vs score
+
+pdf("beauty_age.pdf", width = 8, height = 5)
+ggplot(data_train_comp, aes(x = bty_avg, y = score, color = gender)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = lm, se = FALSE) +
+  labs(x = "Age",
+       y = "Beauty",
+       color = "Gender") +
+  my_theme
+dev.off()
+
+
+# Students agree on beauty ? #
+
+# male vs female 
+
+data_train_comp$bty_mavg = sapply(1:n, function(i) (1/3)*(data_train_comp$bty_m1lower[i] + data_train_comp$bty_m1upper[i] + data_train_comp$bty_m2upper[i]))
+data_train_comp$bty_favg = sapply(1:n, function(i) (1/3)*(data_train_comp$bty_f1lower[i] + data_train_comp$bty_f1upper[i] + data_train_comp$bty_f2upper[i]))
+
+pdf("marks_fem_mal.pdf")
+ggplot(data_train_comp, aes(x = bty_mavg, y = bty_favg, color = gender)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = lm, se = FALSE) +
+  labs(x = "beauty score from male students",
+       y = "beauty score from female students",
+       color = "Gender") +
+  my_theme + geom_abline(intercept = 0, slope = 1, lty = 2)
+dev.off()
+
+# every student again each other
+
+cormat = cor(data_raw[,13:18])
+melted_cormat <- melt(cormat)
+head(melted_cormat)
+
+pdf("cormat.pdf")
+ggplot(data = melted_cormat, aes(x=Var1, y=Var2, fill=value)) + 
+  geom_tile() +
+  scale_fill_gradient2(low = "white", high = "red", 
+                       midpoint = 0.5, limit = c(0.5,1), space = "Lab",
+                       name="Pearson\nCorrelation") +
+  theme_minimal()+ # minimal theme
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+                                   size = 15, hjust = 1)) +
+  coord_fixed() + ylab("") + xlab("") +
+  theme(axis.text=element_text(size=15), 
+        axis.title=element_text(size=17))
+dev.off()
+
 
 ######### Random forests ##########
 
@@ -136,87 +209,20 @@ rf_final <- randomForest(x_train, y_train,
                          ntree = 1000)
 
 # the test performance of the final model
+yhat_train <- predict(rf_final, newdata=x_train)
 yhat_test <- predict(rf_final, newdata=x_test)
 
-
 # MAE
-mae(yhat_test, y_test)
+mae(yhat_train, y_train); mae(yhat_test, y_test)
 
 data_forest_test = data_raw[test_indices,]
 data_forest_test$pred = yhat_test
 
-## features importance ##
-
-data.frame(rf_final$importance) %>% arrange(desc(IncNodePurity))
-
-######### Biases random forest ##########
-
-##### Gender #####
-
-length(which(data_forest_test$gender=="male"))     # nb male in test set
-length(which(data_forest_test$gender=="female"))   # nb female in test set
-
-g_gender = ggplot(data_forest_test, aes(x = pred, fill = gender)) +
-  geom_density(adjust = 1, alpha = 0.5) +
-  labs(fill = "gender",
-       y = "Density")  +
-  my_theme
-
-mean(data_forest_test$pred[which(data_forest_test$gender=="male")])
-mean(data_forest_test$pred[which(data_forest_test$gender=="female")])
-
-ks.test(data_forest_test$pred[which(data_forest_test$gender=="male")],
-        data_forest_test$pred[which(data_forest_test$gender=="female")])$p.value
-
-##### Ethnicity #####
-
-g_eth = ggplot(data_forest_test, aes(x = pred, fill = ethnicity)) +
-  geom_density(adjust = 1, alpha = 0.5) +
-  labs(fill = "Ethnicity",
-       y = "Density")  +
-  my_theme
-
-length(data_forest_test$pred[which(data_forest_test$ethnicity=="minority")])
-length(data_forest_test$pred[which(data_forest_test$ethnicity=="not minority")])
-
-ks.test(data_forest_test$pred[which(data_forest_test$ethnicity=="minority")],
-        data_forest_test$pred[which(data_forest_test$ethnicity=="not minority")])$p.value
-
-
-##### Language #####
-
-length(which(data_forest_test$language=="english"))       # nb english in training set
-length(which(data_forest_test$language=="non-english"))   # nb non english in training set
-
-g_lang = ggplot(data_forest_test, aes(x = pred, fill = language)) +
-  geom_density(adjust = 1, alpha = 0.5) +
-  labs(fill = "Language",
-       y = "Density")  +
-  my_theme
-
-mean(data_forest_test$pred[which(data_forest_test$language=="english")])
-mean(data_forest_test$pred[which(data_forest_test$language=="non-english")])
-
-ks.test(data_forest_test$pred[which(data_forest_test$language=="english")],
-        data_forest_test$pred[which(data_forest_test$language=="non-english")], exact = TRUE)$p.value
-
-##### Picture ######
-
-g_pic = ggplot(data_forest_test, aes(x = pred, fill = pic_outfit)) +
-  geom_density(adjust = 1, alpha = 0.5) +
-  labs(fill = "pic_outfit",
-       y = "Density")  +
-  my_theme
-
-##### plot #####
-
-pdf("grid_bias.pdf", width = width/1.3, height = height/1.3)
-grid.arrange(g_gender, g_eth, g_lang, g_pic, ncol = 2)
-dev.off()
+######### Bias beauty random forest ##########
 
 ##### beauty #####
 
-pdf("beauty_reg_RF.pdf")
+pdf("beauty_reg_RF.pdf", width = 10, height = 6)
 ggplot(data_forest_test, aes(x = bty_avg, y = pred, color = gender)) +
   geom_point(alpha = 0.5) +
   geom_smooth(formula = y ~ x, method = lm, se = FALSE) +
@@ -226,7 +232,7 @@ ggplot(data_forest_test, aes(x = bty_avg, y = pred, color = gender)) +
   my_theme
 dev.off()
 
-data_rf_with_bty = data_forest_test[,c("bty_avg","pred", "gender")]
+data_rf_with_bty = data_forest_test[,c("bty_avg","pred", "gender", "age")]
 head(data_rf_with_bty)
 
 mylm = lm(pred~bty_avg, data_forest_test)
@@ -246,10 +252,10 @@ summary(mylm3)
 set.seed(42)
 
 # grid over which we will perform the hyperparameter search:
-hparam_grid = as.data.frame(expand.grid(mtry=seq(1, 13, by=1), maxnodes=seq(10, 200, by=10)))
+hparam_grid = as.data.frame(expand.grid(mtry=seq(2, 13, by=1), maxnodes=seq(10, 200, by=10)))
 
 # to store the OOB estimates of the MSE
-oob_mses = rep(0.0, nrow(hparam_grid))
+oob_maes = rep(0.0, nrow(hparam_grid))
 
 # perform the gridsearch
 for(hparam_idx in 1:nrow(hparam_grid)) {
@@ -257,41 +263,51 @@ for(hparam_idx in 1:nrow(hparam_grid)) {
   this_mtry = hparam_grid[hparam_idx, 1]
   this_maxnodes = hparam_grid[hparam_idx, 2]
   rf_bty = randomForest(x_train_bty, 
-                    y_train_bty, 
-                    mtry=this_mtry, 
-                    maxnodes=this_maxnodes)
+                        y_train_bty, 
+                        mtry=this_mtry, 
+                        maxnodes=this_maxnodes)
   
   # calculate OOB MSE
-  oob_mses[hparam_idx] <- mae(y_train_bty, predict(rf_bty))
+  oob_maes[hparam_idx] <- mae(y_train_bty, predict(rf_bty))
 }
 
 # select the best model (which has the minimum OOB MSE)
-best_hparam_set <- hparam_grid[which.min(oob_mses),]
+best_hparam_set <- hparam_grid[which.min(oob_maes),]
 
 # train a model on the whole training set with the selected hyperparameters
 rf_final_bty <- randomForest(x_train_bty, y_train_bty,
-                         mtry=best_hparam_set$mtry,
-                         maxnodes=best_hparam_set$maxnodes,
-                         importance=TRUE,
-                         ntree = 2000)
+                             mtry=best_hparam_set$mtry,
+                             maxnodes=best_hparam_set$maxnodes,
+                             importance=TRUE,
+                             ntree = 2000)
 
 # the test performance of the final model
-yhat_test <- predict(rf_final_bty, newdata=x_test_bty)
-
+yhat_train_bty <- predict(rf_final_bty, newdata=x_train_bty)
+yhat_test_bty <- predict(rf_final_bty, newdata=x_test_bty)
 
 # MAE
-mae(yhat_test, y_test)
+mae(yhat_train_bty, y_train); mae(yhat_test_bty, y_test)
 
 data_bty_forest_test = data_raw[test_indices,]
-data_bty_forest_test$pred = yhat_test
+data_bty_forest_test$pred = yhat_test_bty
 
 ## features importance ##
 
-data.frame(rf_final_bty$importance) %>% arrange(desc(IncNodePurity))
+pdf("feat_imp.pdf")
+feat_imp = data.frame(rf_final_bty$importance) %>% arrange(desc(IncNodePurity))
+feat_imp = subset(feat_imp, select=2)
+feat_imp$feature = rownames(feat_imp)
+feat_imp$feature = factor(feat_imp$feature, levels = rev(feat_imp$feature))
+ggplot(feat_imp, aes(x = feature, y=IncNodePurity)) +
+  geom_col(fill='red') + coord_flip() + theme(axis.text=element_text(size=17), 
+                                              axis.title=element_text(size=20)) +
+  ylab("Increase in node purity") + xlab("Feature")
+dev.off()
+
 
 ## beauty ##
 
-pdf("beauty_reg_RF_bty.pdf", width = 10, height = 5)
+pdf("beauty_reg_RF_bty.pdf", width = 10, height = 6)
 ggplot(data_bty_forest_test, aes(x = bty_avg, y = pred, color = gender)) +
   geom_point(alpha = 0.5) +
   geom_smooth(formula = y ~ x, method = lm, se = FALSE) +
@@ -299,6 +315,7 @@ ggplot(data_bty_forest_test, aes(x = bty_avg, y = pred, color = gender)) +
        y = "score",
        color = "Gender") +
   my_theme
+
 dev.off()
 
 
@@ -308,169 +325,93 @@ head(data_rf_with_bty)
 mylm = lm(pred~bty_avg,data_rf_with_bty)
 summary(mylm)
 
-data_bty_male = data_bty_forest_test[which(data_bty_forest_test$gender=="male"), c("bty_avg", "pred", "gender")]
+data_bty_male = data_rf_with_bty[which(data_rf_with_bty$gender=="male"), c("bty_avg", "pred", "gender")]
 mylm2 = lm(pred ~ bty_avg, data_bty_male)
 summary(mylm2)
 
-data_bty_female = data_bty_forest_test[which(data_bty_forest_test$gender=="female"),c("bty_avg","pred", "gender")]
-mylm3 = lm(pred~bty_avg, data_bty_female)
+data_bty_female = data_rf_with_bty[which(data_rf_with_bty$gender=="female"), c("bty_avg","pred", "gender")]
+mylm3 = lm(pred ~ bty_avg, data_bty_female)
 summary(mylm3)
 
 
-########### Biases study dataset #############
 
+########### Biases study RF final with beauty #############
 
 ##### Gender #####
 
-ggplot(data_train_comp, aes(x = score, fill = gender)) +
+g_gender = ggplot(data_bty_forest_test, aes(x = pred, fill = gender)) +
   geom_density(adjust = 1, alpha = 0.5) +
   labs(fill = "gender",
        y = "Density")  +
   my_theme
 
-ks.test(data_train_comp$score[which(data_train_comp$gender == "female")], 
-        data_train_comp$score[which(data_train_comp$gender == "male")])$p.value
-
-mean(data_train_comp$score[which(data_train_comp$gender == "female")])
-mean(data_train_comp$score[which(data_train_comp$gender == "male")])
-
-# Age vs Gender
-
-ggplot(data_train_comp, aes(x = age, y = score, color = gender)) +
-  geom_point(alpha = 0.5) +
-  geom_smooth(method = lm, se = FALSE) +
-  labs(x = "Age",
-       y = "Score",
-       color = "Gender") +
-  my_theme
-
-# Gender vs cls_students
-
-ggplot(data_train_comp, aes(x = cls_students, y = score, color = language)) +
-  geom_point(alpha = 0.5) +
-  geom_smooth(method = lm, se = FALSE) +
-  labs(x = "Age",
-       y = "Beauty",
-       color = "Gender") +
-  my_theme
+ks.test(data_bty_forest_test$pred[which(data_bty_forest_test$gender=="male")],
+        data_bty_forest_test$pred[which(data_bty_forest_test$gender=="female")])
 
 ##### Ethnicity #####
 
-ggplot(data_train_comp, aes(x = score, fill = ethnicity)) +
+g_eth = ggplot(data_bty_forest_test, aes(x = pred, fill = ethnicity)) +
   geom_density(adjust = 1, alpha = 0.5) +
-  labs(fill = "ethnicity",
+  labs(fill = "Ethnicity",
        y = "Density")  +
   my_theme
 
-ks.test(data_train_comp$score[which(data_train_comp$ethnicity == "minority")], 
-        data_train_comp$score[which(data_train_comp$ethnicity == "not minority")])$p.value
+ks.test(data_bty_forest_test$pred[which(data_bty_forest_test$ethnicity=="minority")],
+        data_bty_forest_test$pred[which(data_bty_forest_test$ethnicity=="not minority")])
 
-##### Ethnicity + gender #####
 
-data_train_comp$wom_min = "0"
-data_train_comp$wom_min[which(data_train_comp$gender=="female" & data_raw$ethnicity == "minority")] = 1
-data_train_comp$wom_min = as.factor(data_train_comp$wom_min)
+##### Language #####
 
-ggplot(data_train_comp, aes(x = score, fill = wom_min)) +
+g_lang = ggplot(data_bty_forest_test, aes(x = pred, fill = language)) +
   geom_density(adjust = 1, alpha = 0.5) +
-  labs(fill = "gender",
+  labs(fill = "Language",
        y = "Density")  +
   my_theme
 
-mean(data_forest_test$pred[which(data_forest_test$wom_min=="1")])
-mean(data_forest_test$pred[which(data_forest_test$wom_min=="0")])
+ks.test(data_bty_forest_test$pred[which(data_bty_forest_test$language=="english")],
+        data_bty_forest_test$pred[which(data_bty_forest_test$language=="non-english")])
 
-ks.test(data$score[which(data$ethnicity == "minority")], 
-        data$score[which(data$ethnicity == "not minority")])$p.value
+##### Picture ######
 
-# Language
-
-g = ggplot(data_train_comp, aes(x = score, fill = language)) +
+g_pic = ggplot(data_bty_forest_test, aes(x = pred, fill = pic_outfit)) +
   geom_density(adjust = 1, alpha = 0.5) +
-  labs(fill = "language",
+  labs(fill = "pic_outfit",
        y = "Density")  +
   my_theme
-g
 
-ks.test(data_train_comp$score[which(data_train_comp$language == "english")], 
-        data_train_comp$score[which(data_train_comp$language == "non-english")])$p.value
+ks.test(data_bty_forest_test$pred[which(data_bty_forest_test$pic_outfit=="formal")],
+        data_bty_forest_test$pred[which(data_bty_forest_test$pic_outfit=="not formal")])
 
-# beauty
+# plot
 
-ggplot(data_train_comp, aes(x = bty_avg, y = score, color = gender)) +
+pdf("grid_bias.pdf", width = 10/1.3, height = 6/1.3)
+grid.arrange(g_gender, g_eth, g_lang, g_pic, ncol = 2)
+dev.off()
+
+##### Age #####
+
+pdf("age_bty_rf_bty.pdf", width = 8, height = 5)
+ggplot(data_bty_forest_test, aes(x = age, y = bty_avg, color = gender)) +
   geom_point(alpha = 0.5) +
-  geom_smooth(method = lm, se = FALSE) +
-  labs(x = "Beauty average",
-       y = "score",
-       color = "Gender") +
-  my_theme
-
-# beauty vs age #
-
-pdf("beauty_age.pdf")
-ggplot(data_train_comp, aes(x = age, y = bty_avg, color = gender)) +
-  geom_point(alpha = 0.5) +
-  geom_smooth(method = lm, se = FALSE) +
+  geom_smooth(formula = y ~ x, method = lm, se = FALSE) +
   labs(x = "Age",
-       y = "Beauty",
+       y = "Beauty average",
        color = "Gender") +
   my_theme
 dev.off()
 
-# Students agree on beauty ? #
-
-# male vs female 
-
-data_train_comp$bty_mavg = sapply(1:n, function(i) (1/3)*(data_train_comp$bty_m1lower[i] + data_train_comp$bty_m1upper[i] + data_train_comp$bty_m2upper[i]))
-data_train_comp$bty_favg = sapply(1:n, function(i) (1/3)*(data_train_comp$bty_f1lower[i] + data_train_comp$bty_f1upper[i] + data_train_comp$bty_f2upper[i]))
-
-pdf("marks_fem_mal.pdf")
-ggplot(data_train_comp, aes(x = bty_mavg, y = bty_favg, color = gender)) +
+pdf("age_pred_rf_bty.pdf", width = 8, height = 5)
+ggplot(data_bty_forest_test, aes(x = age, y = pred, color = gender)) +
   geom_point(alpha = 0.5) +
-  geom_smooth(method = lm, se = FALSE) +
-  labs(x = "beauty score from male students",
-       y = "beauty score from female students",
+  geom_smooth(formula = y ~ x, method = lm, se = FALSE) +
+  labs(x = "Age",
+       y = "Predicted Score",
        color = "Gender") +
-  my_theme + geom_abline(intercept = 0, slope = 1, lty = 2)
+  my_theme
 dev.off()
 
-# every student again each other
-
-library(reshape2)
-
-cormat = cor(data_raw[,13:18])
-melted_cormat <- melt(cormat)
-head(melted_cormat)
-
-pdf("cormat.pdf")
-ggplot(data = melted_cormat, aes(x=Var1, y=Var2, fill=value)) + 
-  geom_tile() +
-  scale_fill_gradient2(low = "white", high = "red", 
-                       midpoint = 0.5, limit = c(0.5,1), space = "Lab",
-                       name="Pearson\nCorrelation") +
-  theme_minimal()+ # minimal theme
-  theme(axis.text.x = element_text(angle = 45, vjust = 1, 
-                                   size = 12, hjust = 1))+
-  coord_fixed()
-dev.off()
-
-
-
-##### Correlation between bias variables and predictors #####
-
-
-keep_feat = c("cls_perc_eval", "age", "cls_students", "cls_did_eval",
-              "cls_level, cls_profs, cls_credits", "rank",
-              "gender", "language", "ethnicity","bty_avg",
-              "score")
-
-data_stud = data_raw[-test_indices, names(data_raw) %in% keep_feat, drop = F]
-
-head(data_stud)
-
-
-
-
+mylm = lm(pred~age,data_rf_with_bty)
+summary(mylm)
 
 
 
